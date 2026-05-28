@@ -1,6 +1,6 @@
 # AI Resume Optimizer
 
-AI Resume Optimizer 是一个基于智谱 AI 大模型的简历优化工具。用户输入目标岗位和原始简历内容后，系统会分析简历表达问题，生成更贴近招聘场景的优化版本，并解释修改原因。
+AI Resume Optimizer 是一个基于 DeepSeek 大模型的简历优化工具。用户输入目标岗位和原始简历内容后，系统会分析简历表达问题，生成更贴近招聘场景的优化版本，并解释修改原因。
 
 这个项目展示了一个完整的小型 AI 应用闭环：前端表单交互、FastAPI 后端接口、环境变量管理、AI SDK 调用、结构化 JSON 响应、流式输出和基础错误处理。
 
@@ -29,7 +29,7 @@ AI Resume Optimizer 是一个基于智谱 AI 大模型的简历优化工具。�
 | --- | --- |
 | 后端框架 | FastAPI |
 | 数据校验 | Pydantic |
-| AI 调用 | 智谱 AI SDK `zai-sdk` |
+| AI 调用 | DeepSeek API，通过 OpenAI Python SDK 调用 |
 | 环境变量 | python-dotenv |
 | 服务运行 | Uvicorn |
 | 前端 | HTML, CSS, JavaScript, Fetch API |
@@ -73,10 +73,10 @@ pip install -r requirements.txt
 
 ### 3. 配置环境变量
 
-复制 `.env.example` 为 `.env`，并填写你自己的智谱 AI API Key：
+复制 `.env.example` 为 `.env`，并填写你自己的 DeepSeek API Key：
 
 ```text
-ZHIPUAI_API_KEY=your_api_key_here
+DEEPSEEK_API_KEY=your_api_key_here
 ```
 
 不要把真实 API Key 写入 README、前端代码或提交到 GitHub。
@@ -135,7 +135,7 @@ index.html
 
 | 变量名 | 必填 | 说明 |
 | --- | --- | --- |
-| `ZHIPUAI_API_KEY` | 是 | 智谱 AI API Key，仅供后端调用模型使用 |
+| `DEEPSEEK_API_KEY` | 是 | DeepSeek API Key，仅供后端调用模型使用 |
 
 项目提供 `.env.example` 作为模板。真实 `.env` 文件已在 `.gitignore` 中忽略。
 

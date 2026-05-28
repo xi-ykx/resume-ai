@@ -2,7 +2,7 @@
 
 ## 1. 这个项目做什么
 
-这个项目是一个 AI 简历润色助手。用户在前端页面 `index.html` 输入目标岗位和原始简历内容，后端 `day06.py` 接收请求后调用智谱 AI 模型，让 AI 分析简历问题、优化简历表达，并解释为什么这样修改。
+这个项目是一个 AI 简历润色助手。用户在前端页面 `index.html` 输入目标岗位和原始简历内容，后端 `day06.py` 接收请求后调用 DeepSeek 模型，让 AI 分析简历问题、优化简历表达，并解释为什么这样修改。
 
 当前项目有两种使用方式：
 
@@ -13,26 +13,26 @@
 
 可以把 `day06.py` 理解成 5 个部分：
 
-1. 加载环境变量，读取智谱 AI API Key。
-2. 创建智谱 AI 客户端。
+1. 加载环境变量，读取 DeepSeek API Key。
+2. 创建 DeepSeek 客户端。
 3. 创建 FastAPI Web 服务。
 4. 定义请求数据、响应数据和 AI 调用函数。
 5. 定义后端接口，让前端可以通过 HTTP 调用 AI 能力。
 
 ## 3. 环境变量和 AI 客户端
 
-代码会从项目根目录的 `.env` 文件中加载环境变量，然后读取 `ZHIPUAI_API_KEY`。
+代码会从项目根目录的 `.env` 文件中加载环境变量，然后读取 `DEEPSEEK_API_KEY`。
 
 如果没有配置这个变量，程序启动时会报错：
 
 ```python
-raise ValueError("没有找到api，请检查.env文件")
+raise ValueError("没有找到 DeepSeek API Key，请检查 .env 文件")
 ```
 
-读取到 API Key 后，会创建智谱 AI 客户端：
+读取到 API Key 后，会创建 DeepSeek 客户端：
 
 ```python
-client = ZhipuAiClient(api_key=api_key)
+client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 ```
 
 后面所有调用 AI 的地方，都是通过这个 `client` 完成的。
@@ -216,9 +216,9 @@ stream=True
 
 ## 10. 容易报错的地方
 
-- `.env` 没有配置 `ZHIPUAI_API_KEY`，后端无法启动。
+- `.env` 没有配置 `DEEPSEEK_API_KEY`，后端无法启动。
 - API Key 错误，AI 调用会失败。
-- 网络异常或智谱 AI 服务异常，AI 调用会失败。
+- 网络异常或 DeepSeek 服务异常，AI 调用会失败。
 - AI 没有按要求返回 JSON，`json.loads()` 会失败。
 - AI 返回 JSON 缺少必要字段，例如没有 `reasons`，构造响应时会失败。
 - 前端传入的 `job_target` 或 `resume_text` 太短，FastAPI 会返回 `422`。

@@ -5,7 +5,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Optional
 from dotenv import load_dotenv
-from zai import ZhipuAiClient
+from openai import OpenAI
 from fastapi import FastAPI,HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,15 +23,21 @@ env_path = Path(__file__).resolve().parent / '.env'
 # 把 .env 里的环境变量加载到当前 Python 进程中。
 load_dotenv(dotenv_path=env_path)
 
-# 从环境变量里读取智谱 AI 的 API Key。
-api_key = os.getenv("ZHIPUAI_API_KEY")
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+
+# 从环境变量里读取 DeepSeek API Key。
+api_key = os.getenv("DEEPSEEK_API_KEY")
 
 # 如果没有配置 API Key，程序启动时直接报错，避免后面调用 AI 时才失败。
 if not api_key:
-    raise ValueError("没有找到api，请检查.env文件")
+    raise ValueError("没有找到 DeepSeek API Key，请检查 .env 文件")
 
-# 创建智谱 AI 客户端，后续所有模型调用都通过这个 client 完成。
-client = ZhipuAiClient(api_key= api_key)
+# 创建 DeepSeek 客户端，后续所有模型调用都通过这个 client 完成。
+client = OpenAI(
+    api_key=api_key,
+    base_url=DEEPSEEK_BASE_URL
+)
 
 # 创建 FastAPI 应用对象，uvicorn 会加载这个 app 对外提供 Web 服务。
 app = FastAPI()
@@ -163,11 +169,11 @@ def raise_ai_call_error(error: Exception) -> None:
         detail="AI 服务调用失败，请稍后重试。"
     ) from error
 
-# 统一发起智谱 AI 请求，所有调用异常都转换成 JSON 格式的 HTTP 错误。
+# 统一发起 DeepSeek AI 请求，所有调用异常都转换成 JSON 格式的 HTTP 错误。
 def create_ai_completion(messages: list[dict], temperature: float, stream: bool = False):
     try:
         return client.chat.completions.create(
-            model="glm-5.1",
+            model=DEEPSEEK_MODEL,
             messages=messages,
             temperature=temperature,
             stream=stream
@@ -248,7 +254,7 @@ def stream_ai_content(first_content: str, response):
 
 # 普通文本版 AI 调用，主要用于命令行运行 python day06.py 时测试。
 def ask_ai(resume_text:str,job_target:str)->str:
-    # 调用智谱 AI 的聊天补全接口，请模型按固定三段格式输出文本。
+    # 调用 DeepSeek 的聊天补全接口，请模型按固定三段格式输出文本。
     response = create_ai_completion(
         messages=[
             {

@@ -414,5 +414,5 @@ AI 服务连接中断，请稍后重试。
 - 不要在前端代码中写真实 API Key。
 - 不要把真实 API Key 写进本文档。
 - 不要提交 `.env` 文件。
-- 前端只调用本项目后端接口，不直接调用智谱 AI。
-- 后端通过 `ZHIPUAI_API_KEY` 环境变量读取 API Key。
+- 前端只调用本项目后端接口，不直接调用 DeepSeek API。
+- 后端通过 `DEEPSEEK_API_KEY` 环境变量读取 API Key。
