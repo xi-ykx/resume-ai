@@ -1,53 +1,86 @@
 # AI Resume Optimizer
 
-AI Resume Optimizer 是一个基于 DeepSeek 大模型的简历优化工具。用户输入目标岗位和原始简历内容后，系统会分析简历表达问题，生成更贴近招聘场景的优化版本，并解释修改原因。
+## 项目简介
 
-这个项目展示了一个完整的小型 AI 应用闭环：前端表单交互、FastAPI 后端接口、环境变量管理、AI SDK 调用、结构化 JSON 响应、流式输出和基础错误处理。
+AI Resume Optimizer 是一个面向求职场景的 AI 简历优化应用。用户输入目标岗位和原始简历内容后，后端会调用 DeepSeek 大模型，生成优化后的简历表达、修改理由和关键词建议，前端负责提交表单并分区展示结果。
 
-## 项目亮点
+这个项目适合作为 AI 应用工程师作品集项目展示：它覆盖了从前端交互、后端 API、Prompt 设计、模型调用、结构化输出、流式响应、错误处理、安全边界到基础测试的完整小闭环。
 
-- **面向真实场景**：围绕简历优化这一明确业务需求设计输入、输出和提示词。
-- **双模式输出**：支持结构化 JSON 返回，也支持流式文本返回。
-- **安全边界清晰**：API Key 仅通过 `.env` 配置，不暴露到前端或文档。
-- **输入校验**：后端会拒绝空简历、空岗位等无效请求，避免无意义调用 AI。
-- **错误处理**：AI 调用失败、超时、返回为空时返回明确 JSON 错误。
-- **日志记录**：记录请求开始、结束、错误类型和简历长度，不记录完整简历内容。
+## 功能截图
 
-## 功能概览
+> 截图占位：后续可以在这里放前端页面截图。
+
+```text
+docs/images/home-page.png
+```
+
+> 截图占位：后续可以在这里放结构化优化结果截图。
+
+```text
+docs/images/json-result.png
+```
+
+> 截图占位：后续可以在这里放流式输出效果截图。
+
+```text
+docs/images/stream-result.png
+```
+
+## 核心功能
 
 - 输入目标岗位和原始简历内容。
-- 分析原始简历存在的问题。
-- 基于用户提供的事实优化简历表达。
-- 解释为什么这样修改。
-- 提供结构化结果，方便前端分区展示。
-- 提供流式输出，让用户逐步看到生成结果。
-- 提供健康检查接口，方便确认后端服务状态。
+- 使用 DeepSeek API 对简历进行 AI 优化。
+- 返回优化后的简历、修改理由和关键词建议。
+- 支持结构化 JSON 返回，方便前端分区展示。
+- 支持流式输出，让用户逐步看到生成结果。
+- 支持复制优化结果。
+- 支持基础历史记录，保存最近优化结果到本地 `data/history.json`。
+- 提供健康检查接口和历史记录接口。
+- 对空输入、超长输入、AI 调用失败和空返回做基础错误处理。
 
 ## 技术栈
 
-| 分类 | 技术 |
+| 模块 | 技术 |
 | --- | --- |
 | 后端框架 | FastAPI |
 | 数据校验 | Pydantic |
-| AI 调用 | DeepSeek API，通过 OpenAI Python SDK 调用 |
+| AI 调用 | DeepSeek API, OpenAI Python SDK |
 | 环境变量 | python-dotenv |
 | 服务运行 | Uvicorn |
 | 前端 | HTML, CSS, JavaScript, Fetch API |
+| 流式输出 | FastAPI `StreamingResponse` |
+| 测试 | Python unittest, FastAPI TestClient, mock |
+| 本地数据 | JSON 文件 |
+
+## 项目亮点
+
+- **完整 AI 应用闭环**：从用户输入到模型调用，再到结构化展示和复制结果，覆盖真实 AI 产品的基本链路。
+- **结构化输出设计**：通过 Prompt 约束模型返回 JSON，前端可以稳定展示 `optimized_resume`、`reasons` 和 `problem_analysis`。
+- **流式响应体验**：支持边生成边返回，减少用户等待感。
+- **安全意识明确**：API Key 仅在后端读取，不进入前端；日志只记录请求状态和简历长度，不记录完整简历。
+- **错误处理清晰**：对空输入、超长输入、AI 超时、AI 返回为空和格式异常返回明确错误。
+- **逐步模块化**：配置已拆分到 `config.py`，AI 模型调用已拆分到 `services/ai_client.py`，为后续继续重构打基础。
+- **可测试性提升**：基础 API 测试使用 mock，避免真实调用 AI API，降低测试成本。
 
 ## 项目结构
 
 ```text
 .
-├── README.md                  # 项目介绍和运行说明
-├── AGENTS.md                  # 协作规则和项目约束
-├── day06.py                   # FastAPI 后端主文件
-├── index.html                 # 前端页面
-├── requirements.txt           # Python 直接依赖
-├── .env.example               # 环境变量模板，不包含真实密钥
-├── .gitignore                 # Git 忽略规则
+├── README.md
+├── AGENTS.md
+├── config.py
+├── day06.py
+├── index.html
+├── requirements.txt
+├── .env.example
+├── .gitignore
 ├── docs/
-│   ├── api.md                 # API 文档
-│   └── day03-backend-notes.md # 后端学习笔记
+│   ├── api.md
+│   └── day03-backend-notes.md
+├── services/
+│   └── ai_client.py
+├── tests/
+│   └── test_api.py
 └── test/
     ├── day03.py
     ├── day04.py
@@ -56,57 +89,48 @@ AI Resume Optimizer 是一个基于 DeepSeek 大模型的简历优化工具。�
 
 ## 本地运行
 
-### 1. 克隆并进入项目
+### 1. 克隆项目
 
 ```bash
 git clone https://github.com/xi-ykx/resume-ai.git
 cd resume-ai
 ```
 
-### 2. 安装依赖
+### 2. 创建并激活虚拟环境
 
-建议先创建并激活虚拟环境，然后安装依赖：
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+### 3. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. 配置环境变量
+### 4. 配置环境变量
 
-复制 `.env.example` 为 `.env`，并填写你自己的 DeepSeek API Key：
+复制 `.env.example` 为 `.env`，然后填写自己的 DeepSeek API Key。
 
 ```text
 DEEPSEEK_API_KEY=your_api_key_here
 ```
 
-不要把真实 API Key 写入 README、前端代码或提交到 GitHub。
+不要把真实 API Key 写入 README、前端代码、测试代码或提交到 GitHub。
 
-### 4. 启动后端
+### 5. 启动后端
 
 ```bash
 uvicorn day06:app --reload
 ```
 
-默认服务地址：
+默认地址：
 
 ```text
 http://127.0.0.1:8000
-```
-
-### 5. 检查服务状态
-
-浏览器访问：
-
-```text
-http://127.0.0.1:8000/health
-```
-
-预期返回：
-
-```json
-{
-  "status": "ok"
-}
 ```
 
 ### 6. 打开前端
@@ -117,41 +141,57 @@ http://127.0.0.1:8000/health
 index.html
 ```
 
-输入目标岗位和简历内容后，可以分别测试“结构化优化简历”和“流式优化简历”。
+输入目标岗位和简历内容后，可以测试结构化优化和流式优化。
+
+### 7. 运行测试
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+当前测试会 mock AI 调用，不需要真实请求 DeepSeek API。
 
 ## API 文档
 
-完整接口说明见：
+完整 API 说明见：[docs/api.md](docs/api.md)
 
-[docs/api.md](docs/api.md)
+核心接口：
 
-当前核心接口：
-
-- `GET /health`：健康检查
-- `POST /polish-resume-json`：结构化简历优化
-- `POST /polish-resume-stream`：流式简历优化
-
-## 环境变量
-
-| 变量名 | 必填 | 说明 |
+| 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `DEEPSEEK_API_KEY` | 是 | DeepSeek API Key，仅供后端调用模型使用 |
-
-项目提供 `.env.example` 作为模板。真实 `.env` 文件已在 `.gitignore` 中忽略。
+| `GET` | `/health` | 健康检查 |
+| `POST` | `/polish-resume-json` | 结构化简历优化 |
+| `POST` | `/polish-resume-stream` | 流式简历优化 |
+| `GET` | `/history` | 读取最近 10 条本地历史记录 |
 
 ## 安全说明
 
-- 不提交 `.env`。
-- 不在前端保存或传输 API Key。
-- 不在日志中记录完整简历内容。
-- 错误响应不暴露 API Key 或底层敏感信息。
-- 当前 CORS 配置适合本地开发，生产部署时应限制允许访问的前端域名。
+- `.env` 用于保存真实 API Key，不允许提交到 GitHub。
+- `.env.example` 只保留占位符，不包含真实密钥。
+- API Key 只在后端读取，不暴露给 `index.html`。
+- 日志不记录完整简历内容，最多记录简历长度和错误类型。
+- `data/` 已加入 `.gitignore`，避免本地历史简历被误提交。
+- `/history` 接口只允许本机访问，避免公网直接读取简历历史。
+- 当前项目适合本地学习和作品集演示，生产部署前还需要增加鉴权、限流、HTTPS、持久化数据库和更严格的 CORS 配置。
 
 ## 后续计划
 
-- 增加复制优化结果功能。
-- 增加输入字数统计和最大长度限制。
-- 增加请求取消功能，优化流式输出体验。
-- 增加单元测试和接口测试。
-- 增加更细粒度的错误码。
-- 为生产部署收紧 CORS、增加鉴权和限流。
+- 将路由拆分到 `routes/resume.py`。
+- 将简历业务逻辑拆分到 `services/resume_service.py`。
+- 增加历史记录前端页面。
+- 增加删除历史记录和清空历史记录功能。
+- 增加请求取消、加载状态和字数统计。
+- 增加更完整的异常类型和错误码。
+- 增加部署文档和线上环境配置说明。
+- 增加截图和演示 GIF。
+
+## 面试时可以讲的技术点
+
+- 如何设计一个 AI 应用的端到端流程：前端输入、后端校验、Prompt 构造、模型调用、结果展示。
+- 为什么 API Key 必须放在后端环境变量中，而不能写进前端。
+- 如何通过 Prompt 要求模型返回稳定 JSON，并用 Pydantic 约束接口返回格式。
+- 如何处理 AI API 的失败、超时、空返回和格式异常。
+- 为什么要使用流式输出，以及 `StreamingResponse` 的基本工作方式。
+- 如何避免日志泄露用户简历隐私。
+- 如何用 mock 测试 AI 接口，避免测试依赖真实模型和真实 API Key。
+- 如何从单文件项目逐步演进到分层结构，而不是一次性大重构。

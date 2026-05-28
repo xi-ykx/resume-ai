@@ -27,3 +27,6 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# Runtime data may contain private resume history
+data/

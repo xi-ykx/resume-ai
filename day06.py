@@ -1,15 +1,26 @@
-import os
 import json
 import logging
-from pathlib import Path
+from datetime import datetime, timezone
+from threading import Lock
 from time import perf_counter
-from typing import Optional
-from dotenv import load_dotenv
-from openai import OpenAI
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI,HTTPException,Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel,Field
+from config import (
+    DATA_DIR,
+    HISTORY_PATH,
+    LOCAL_ALLOWED_ORIGINS,
+    LOCAL_CLIENT_HOSTS,
+    MAX_JOB_TARGET_LENGTH,
+    MAX_RESUME_TEXT_LENGTH,
+)
+from services.ai_client import (
+    create_ai_completion,
+    get_ai_message_content,
+    prepare_ai_stream,
+    stream_ai_content,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,27 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ai_resume_optimizer")
 
-# 找到当前 day06.py 所在目录下的 .env 文件路径。
-env_path = Path(__file__).resolve().parent / '.env'
-
-# 把 .env 里的环境变量加载到当前 Python 进程中。
-load_dotenv(dotenv_path=env_path)
-
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-v4-flash"
-
-# 从环境变量里读取 DeepSeek API Key。
-api_key = os.getenv("DEEPSEEK_API_KEY")
-
-# 如果没有配置 API Key，程序启动时直接报错，避免后面调用 AI 时才失败。
-if not api_key:
-    raise ValueError("没有找到 DeepSeek API Key，请检查 .env 文件")
-
-# 创建 DeepSeek 客户端，后续所有模型调用都通过这个 client 完成。
-client = OpenAI(
-    api_key=api_key,
-    base_url=DEEPSEEK_BASE_URL
-)
+HISTORY_LOCK = Lock()
 
 # 创建 FastAPI 应用对象，uvicorn 会加载这个 app 对外提供 Web 服务。
 app = FastAPI()
@@ -45,8 +36,8 @@ app = FastAPI()
 # 配置跨域访问，方便本地 index.html 页面调用 127.0.0.1:8000 的后端接口。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins = ["*"],
-    allow_credentials = True,
+    allow_origins = LOCAL_ALLOWED_ORIGINS,
+    allow_credentials = False,
     allow_methods = ["*"],
     allow_headers = ["*"],
 )
@@ -88,11 +79,19 @@ async def log_http_request(request, call_next):
 
 # 定义前端请求后端时必须提交的数据格式。
 class ResumeRequest(BaseModel):
-    # 目标岗位至少 2 个字符，例如“AI应用工程师”。
-    job_target: str = Field(..., min_length=2, description="目标岗位")
+    # 目标岗位可以为空；为空时按通用招聘场景优化。
+    job_target: str = Field(
+        "",
+        max_length=MAX_JOB_TARGET_LENGTH,
+        description="目标岗位"
+    )
 
     # 简历内容由接口入口做空值校验，便于返回更清晰的错误信息。
-    resume_text: str = Field(..., description="简历内容")
+    resume_text: str = Field(
+        ...,
+        max_length=MAX_RESUME_TEXT_LENGTH,
+        description="简历内容"
+    )
 
 # 定义结构化接口返回给前端的数据格式。
 class ResumeJsonResponse(BaseModel):
@@ -137,123 +136,99 @@ def validate_resume_text(resume_text: str) -> None:
             detail="简历内容不能为空，请填写原始简历内容。"
         )
 
-# 检查目标岗位是否为空；全空格不允许继续调用 AI。
-def validate_job_target(job_target: str) -> None:
-    if not job_target.strip():
-        logger.warning("job_target_validation_error error_type=EmptyJobTarget")
-        raise HTTPException(
-            status_code=400,
-            detail="目标岗位不能为空，请填写目标岗位。"
-        )
+# 目标岗位为空时，给 prompt 一个明确的通用优化方向。
+def format_job_target(job_target: str) -> str:
+    return job_target.strip() or "未指定目标岗位，请按通用招聘场景优化"
 
-# 根据异常类型返回对用户友好的错误，不暴露 API Key 或简历原文。
-def raise_ai_call_error(error: Exception) -> None:
-    error_name = error.__class__.__name__.lower()
+# 组装一条历史记录，只保存必要信息，不保存 API Key 或原始简历全文。
+def build_history_record(job_target: str, resume_text: str, optimized_result: str) -> dict:
+    return {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "job_target": job_target.strip(),
+        "original_length": len(resume_text),
+        "optimized_result": optimized_result
+    }
 
-    if "timeout" in error_name:
-        logger.error(
-            "ai_call_error error_type=%s status_code=504",
-            error.__class__.__name__
-        )
-        raise HTTPException(
-            status_code=504,
-            detail="AI 服务请求超时，请稍后重试。"
-        ) from error
-
-    logger.error(
-        "ai_call_error error_type=%s status_code=502",
-        error.__class__.__name__
-    )
-    raise HTTPException(
-        status_code=502,
-        detail="AI 服务调用失败，请稍后重试。"
-    ) from error
-
-# 统一发起 DeepSeek AI 请求，所有调用异常都转换成 JSON 格式的 HTTP 错误。
-def create_ai_completion(messages: list[dict], temperature: float, stream: bool = False):
-    try:
-        return client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=messages,
-            temperature=temperature,
-            stream=stream
-        )
-    except Exception as error:
-        raise_ai_call_error(error)
-
-# 安全读取非流式 AI 返回内容，避免返回为空或结构异常时继续处理。
-def get_ai_message_content(response) -> str:
-    try:
-        content = response.choices[0].message.content
-    except Exception as error:
-        logger.error(
-            "ai_response_error error_type=%s status_code=502",
-            error.__class__.__name__
-        )
-        raise HTTPException(
-            status_code=502,
-            detail="AI 返回结构异常，请稍后重试。"
-        ) from error
-
-    if not content or not content.strip():
-        logger.error("ai_response_error error_type=EmptyAIContent status_code=502")
-        raise HTTPException(
-            status_code=502,
-            detail="AI 返回内容为空，请稍后重试。"
-        )
-
-    return content
-
-# 安全读取流式返回中的文本片段。
-def get_ai_stream_content(chunk) -> Optional[str]:
-    try:
-        return chunk.choices[0].delta.content
-    except Exception as error:
-        logger.error(
-            "ai_stream_error error_type=%s status_code=502",
-            error.__class__.__name__
-        )
-        raise HTTPException(
-            status_code=502,
-            detail="AI 流式返回结构异常，请稍后重试。"
-        ) from error
-
-# 在开始 StreamingResponse 前先拿到第一段内容，便于失败时返回 JSON 错误。
-def prepare_ai_stream(response):
-    try:
-        for chunk in response:
-            content = get_ai_stream_content(chunk)
-            if content:
-                return content, response
-    except HTTPException:
-        raise
-    except Exception as error:
-        raise_ai_call_error(error)
-
-    logger.error("ai_stream_error error_type=EmptyAIStreamContent status_code=502")
-    raise HTTPException(
-        status_code=502,
-        detail="AI 返回内容为空，请稍后重试。"
-    )
-
-# 继续输出已经通过首段校验的流式内容。
-def stream_ai_content(first_content: str, response):
-    yield first_content
+# 读取已经保存的历史记录；文件不存在时返回空列表。
+def load_history_records() -> list[dict]:
+    if not HISTORY_PATH.exists():
+        return []
 
     try:
-        for chunk in response:
-            content = get_ai_stream_content(chunk)
-            if content:
-                yield content
+        data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
     except Exception as error:
         logger.warning(
-            "ai_stream_interrupted error_type=%s",
+            "history_read_error error_type=%s",
             error.__class__.__name__
         )
-        yield "\n\nAI 服务连接中断，请稍后重试。"
+        return []
+
+    if not isinstance(data, list):
+        logger.warning("history_read_error error_type=InvalidHistoryFormat")
+        return []
+
+    return data
+
+# 成功优化后写入历史记录；历史记录失败不影响本次接口返回。
+def save_history_record(job_target: str, resume_text: str, optimized_result: str) -> None:
+    if not optimized_result.strip():
+        return
+
+    try:
+        with HISTORY_LOCK:
+            DATA_DIR.mkdir(exist_ok=True)
+            records = load_history_records()
+            records.append(
+                build_history_record(
+                    job_target=job_target,
+                    resume_text=resume_text,
+                    optimized_result=optimized_result
+                )
+            )
+            HISTORY_PATH.write_text(
+                json.dumps(records, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+    except Exception as error:
+        logger.warning(
+            "history_write_error error_type=%s",
+            error.__class__.__name__
+        )
+
+# 返回最近的历史记录，最新的一条排在最前面。
+def get_recent_history_records(limit: int = 10) -> list[dict]:
+    records = load_history_records()
+    return list(reversed(records))[:limit]
+
+# 判断请求是否来自本机，避免公网直接读取简历历史记录。
+def is_local_request(request: Request) -> bool:
+    if not request.client:
+        return False
+
+    return request.client.host in LOCAL_CLIENT_HOSTS
+
+# 包装流式结果：一边返回给前端，一边在完整成功后保存历史记录。
+def stream_ai_content_with_history(stream, job_target: str, resume_text: str):
+    chunks = []
+
+    for content in stream:
+        chunks.append(content)
+        yield content
+
+    optimized_result = "".join(chunks).strip()
+    if "AI 服务连接中断，请稍后重试。" in optimized_result:
+        return
+
+    save_history_record(
+        job_target=job_target,
+        resume_text=resume_text,
+        optimized_result=optimized_result
+    )
 
 # 普通文本版 AI 调用，主要用于命令行运行 python day06.py 时测试。
 def ask_ai(resume_text:str,job_target:str)->str:
+    job_target_prompt = format_job_target(job_target)
+
     # 调用 DeepSeek 的聊天补全接口，请模型按固定三段格式输出文本。
     response = create_ai_completion(
         messages=[
@@ -263,26 +238,31 @@ def ask_ai(resume_text:str,job_target:str)->str:
 你是一个专业的简历优化顾问，擅长帮助求职者把普通经历改写成更适合招聘场景的表达。
 
 你的任务：
-1. 分析原始简历内容的问题
-2. 根据目标岗位优化表达
-3. 尽量使用具体、专业、结果导向的语言
-4. 不要编造不存在的经历、数据或项目
+1. 根据目标岗位优化简历表达
+2. 说明这样修改的理由
+3. 给出适合目标岗位的关键词建议
+4. 尽量使用具体、专业、结果导向的语言
 5. 用中文回答
+
+重要规则：
+- 只能基于用户提供的原始简历内容优化表达
+- 不要编造不存在的经历、数据、项目、技术栈或成果
+- 关键词建议可以来自目标岗位方向，但不能伪装成用户已经具备的经历
 """
             },
             {
                 "role":"user",
                 "content":f"""
-目标岗位：{job_target}
+目标岗位：{job_target_prompt}
 
 原始简历内容：
 {resume_text}
 
 请按照下面格式输出：
 
-一、原始内容存在的问题
-二、优化后的简历表达
-三、为什么这样修改
+一、优化后的简历
+二、修改理由
+三、关键词建议
 """
             }
         ],
@@ -294,6 +274,8 @@ def ask_ai(resume_text:str,job_target:str)->str:
 
 # 结构化 JSON 版 AI 调用，供 /polish-resume-json 接口使用。
 def ask_ai_json(job_target:str,resume_text:str)->ResumeJsonResponse:
+    job_target_prompt = format_job_target(job_target)
+
     # 低 temperature 可以让模型输出更稳定，更适合要求严格 JSON 的场景。
     response = create_ai_completion(
         messages=[
@@ -309,31 +291,42 @@ def ask_ai_json(job_target:str,resume_text:str)->ResumeJsonResponse:
     不要返回 ```json。
     不要编造不存在的经历、数据或项目。
 
+    你的任务：
+    1. 输出优化后的简历
+    2. 输出修改理由
+    3. 输出关键词建议
+
     重要规则：
     1. 只能基于用户提供的原始简历内容优化表达
     2. 禁止添加用户没有明确提供的技术栈、框架、项目成果、上线经历和量化数据
     3. 可以让表达更专业，但不能新增事实
+    4. 关键词建议可以来自目标岗位方向，但不能写成用户已经具备的事实
 
     返回内容必须可以直接被 Python 的 json.loads() 解析。
 
     JSON 格式必须严格如下：
 
     {
-      "problem_analysis": ["问题1", "问题2"],
-      "optimized_resume": "优化后的简历表达",
-      "reasons": ["理由1", "理由2"]
+      "problem_analysis": ["关键词建议1", "关键词建议2"],
+      "optimized_resume": "优化后的简历",
+      "reasons": ["修改理由1", "修改理由2"]
     }
+
+    字段含义：
+    - problem_analysis：关键词建议列表
+    - optimized_resume：优化后的简历内容
+    - reasons：修改理由列表
     """
             },
             {
                 "role": "user",
                 "content": f"""
-    目标岗位：{job_target}
+    目标岗位：{job_target_prompt}
 
     原始简历内容：
     {resume_text}
 
-    请根据目标岗位优化这段简历。
+    请根据目标岗位优化这段简历，并给出修改理由和关键词建议。
     只返回 JSON，不要返回任何其他文字。
     """
             }
@@ -367,6 +360,8 @@ def ask_ai_json(job_target:str,resume_text:str)->ResumeJsonResponse:
 
 # 流式文本版 AI 调用，供 /polish-resume-stream 接口使用。
 def ask_ai_stream(resume_text:str,job_target:str):
+    job_target_prompt = format_job_target(job_target)
+
     # stream=True 表示模型边生成边返回，前端可以逐步显示内容。
     response = create_ai_completion(
         messages=[
@@ -379,22 +374,23 @@ def ask_ai_stream(resume_text:str,job_target:str):
     1. 不要编造用户没有提供的经历、技术栈、项目成果或数据
     2. 可以优化表达，但不能新增事实
     3. 用中文回答
-    4. 输出适合人类阅读的简历优化建议
+    4. 输出优化后的简历、修改理由和关键词建议
+    5. 关键词建议可以来自目标岗位方向，但不能写成用户已经具备的事实
     """
             },
             {
                 "role": "user",
                 "content": f"""
-    目标岗位：{job_target}
+    目标岗位：{job_target_prompt}
 
     原始简历内容：
     {resume_text}
 
     请按照下面格式输出：
 
-    一、原始内容存在的问题
-    二、优化后的简历表达
-    三、为什么这样修改
+    一、优化后的简历
+    二、修改理由
+    三、关键词建议
     """
             }
         ],
@@ -424,13 +420,17 @@ def polish_resume_json_api(request: ResumeRequest):
     )
 
     try:
-        validate_job_target(request.job_target)
         validate_resume_text(request.resume_text)
 
         # 从请求体中取出简历内容和目标岗位，交给 JSON 版 AI 函数处理。
         response = ask_ai_json(
             resume_text=request.resume_text,
             job_target=request.job_target
+        )
+        save_history_record(
+            job_target=request.job_target,
+            resume_text=request.resume_text,
+            optimized_result=response.optimized_resume
         )
     except HTTPException as error:
         logger.warning(
@@ -462,11 +462,15 @@ def polish_resume_stream_api(request:ResumeRequest):
     )
 
     try:
-        validate_job_target(request.job_target)
         validate_resume_text(request.resume_text)
         stream = ask_ai_stream(
             resume_text=request.resume_text,
             job_target=request.job_target
+        )
+        stream = stream_ai_content_with_history(
+            stream=stream,
+            job_target=request.job_target,
+            resume_text=request.resume_text
         )
     except HTTPException as error:
         logger.warning(
@@ -489,6 +493,17 @@ def polish_resume_stream_api(request:ResumeRequest):
         resume_length
     )
     return response
+
+# 历史记录接口，返回最近 10 条成功优化记录。
+@app.get("/history")
+def get_history_api(request: Request):
+    if not is_local_request(request):
+        raise HTTPException(
+            status_code=403,
+            detail="历史记录只允许本机访问。"
+        )
+
+    return get_recent_history_records(limit=10)
 
 # 健康检查接口，常用于确认后端进程是否正常。
 @app.get('/health')
