@@ -41,8 +41,8 @@ class ResumeRequest(BaseModel):
     # 目标岗位至少 2 个字符，例如“AI应用工程师”。
     job_target: str = Field(..., min_length=2, description="目标岗位")
 
-    # 简历内容至少 5 个字符，避免用户提交空内容。
-    resume_text: str = Field(..., min_length=5, description="简历内容")
+    # 简历内容由接口入口做空值校验，便于返回更清晰的错误信息。
+    resume_text: str = Field(..., description="简历内容")
 
 # 定义结构化接口返回给前端的数据格式。
 class ResumeJsonResponse(BaseModel):
@@ -74,6 +74,14 @@ def clean_json_text(text: str) -> str:
 
     # 返回清理后的文本，预期应该是纯 JSON 字符串。
     return text
+
+# 检查用户是否真的填写了简历内容；全空格也算空内容。
+def validate_resume_text(resume_text: str) -> None:
+    if not resume_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="简历内容不能为空，请填写原始简历内容。"
+        )
 
 # 普通文本版 AI 调用，主要用于命令行运行 python day06.py 时测试。
 def ask_ai(resume_text:str,job_target:str)->str:
@@ -240,6 +248,8 @@ def home():
 # 结构化简历优化接口，前端点击“结构化优化简历”时会调用它。
 @app.post("/polish-resume-json", response_model=ResumeJsonResponse)
 def polish_resume_json_api(request: ResumeRequest):
+    validate_resume_text(request.resume_text)
+
     # 从请求体中取出简历内容和目标岗位，交给 JSON 版 AI 函数处理。
     return ask_ai_json(
         resume_text=request.resume_text,
@@ -249,6 +259,8 @@ def polish_resume_json_api(request: ResumeRequest):
 # 流式简历优化接口，前端点击“流式优化简历”时会调用它。
 @app.post("/polish-resume-stream")
 def polish_resume_stream_api(request:ResumeRequest):
+    validate_resume_text(request.resume_text)
+
     # StreamingResponse 会把 ask_ai_stream 生成的文本块持续返回给浏览器。
     return StreamingResponse(
         ask_ai_stream(
