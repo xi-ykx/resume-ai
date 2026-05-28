@@ -1,12 +1,21 @@
 import os
 import json
+import logging
 from pathlib import Path
+from time import perf_counter
+from typing import Optional
 from dotenv import load_dotenv
 from zai import ZhipuAiClient
 from fastapi import FastAPI,HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel,Field
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
+logger = logging.getLogger("ai_resume_optimizer")
 
 # 找到当前 day06.py 所在目录下的 .env 文件路径。
 env_path = Path(__file__).resolve().parent / '.env'
@@ -35,6 +44,41 @@ app.add_middleware(
     allow_methods = ["*"],
     allow_headers = ["*"],
 )
+
+# 记录每个 HTTP 请求的开始、结束和异常类型，不记录请求体内容。
+@app.middleware("http")
+async def log_http_request(request, call_next):
+    start_time = perf_counter()
+    path = request.url.path
+
+    logger.info(
+        "request_start method=%s path=%s",
+        request.method,
+        path
+    )
+
+    try:
+        response = await call_next(request)
+    except Exception as error:
+        duration_ms = (perf_counter() - start_time) * 1000
+        logger.error(
+            "request_error method=%s path=%s error_type=%s duration_ms=%.2f",
+            request.method,
+            path,
+            error.__class__.__name__,
+            duration_ms
+        )
+        raise
+
+    duration_ms = (perf_counter() - start_time) * 1000
+    logger.info(
+        "request_end method=%s path=%s status_code=%s duration_ms=%.2f",
+        request.method,
+        path,
+        response.status_code,
+        duration_ms
+    )
+    return response
 
 # 定义前端请求后端时必须提交的数据格式。
 class ResumeRequest(BaseModel):
@@ -78,16 +122,134 @@ def clean_json_text(text: str) -> str:
 # 检查用户是否真的填写了简历内容；全空格也算空内容。
 def validate_resume_text(resume_text: str) -> None:
     if not resume_text.strip():
+        logger.warning(
+            "resume_validation_error error_type=EmptyResumeText resume_length=%d",
+            len(resume_text)
+        )
         raise HTTPException(
             status_code=400,
             detail="简历内容不能为空，请填写原始简历内容。"
         )
 
+# 检查目标岗位是否为空；全空格不允许继续调用 AI。
+def validate_job_target(job_target: str) -> None:
+    if not job_target.strip():
+        logger.warning("job_target_validation_error error_type=EmptyJobTarget")
+        raise HTTPException(
+            status_code=400,
+            detail="目标岗位不能为空，请填写目标岗位。"
+        )
+
+# 根据异常类型返回对用户友好的错误，不暴露 API Key 或简历原文。
+def raise_ai_call_error(error: Exception) -> None:
+    error_name = error.__class__.__name__.lower()
+
+    if "timeout" in error_name:
+        logger.error(
+            "ai_call_error error_type=%s status_code=504",
+            error.__class__.__name__
+        )
+        raise HTTPException(
+            status_code=504,
+            detail="AI 服务请求超时，请稍后重试。"
+        ) from error
+
+    logger.error(
+        "ai_call_error error_type=%s status_code=502",
+        error.__class__.__name__
+    )
+    raise HTTPException(
+        status_code=502,
+        detail="AI 服务调用失败，请稍后重试。"
+    ) from error
+
+# 统一发起智谱 AI 请求，所有调用异常都转换成 JSON 格式的 HTTP 错误。
+def create_ai_completion(messages: list[dict], temperature: float, stream: bool = False):
+    try:
+        return client.chat.completions.create(
+            model="glm-5.1",
+            messages=messages,
+            temperature=temperature,
+            stream=stream
+        )
+    except Exception as error:
+        raise_ai_call_error(error)
+
+# 安全读取非流式 AI 返回内容，避免返回为空或结构异常时继续处理。
+def get_ai_message_content(response) -> str:
+    try:
+        content = response.choices[0].message.content
+    except Exception as error:
+        logger.error(
+            "ai_response_error error_type=%s status_code=502",
+            error.__class__.__name__
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="AI 返回结构异常，请稍后重试。"
+        ) from error
+
+    if not content or not content.strip():
+        logger.error("ai_response_error error_type=EmptyAIContent status_code=502")
+        raise HTTPException(
+            status_code=502,
+            detail="AI 返回内容为空，请稍后重试。"
+        )
+
+    return content
+
+# 安全读取流式返回中的文本片段。
+def get_ai_stream_content(chunk) -> Optional[str]:
+    try:
+        return chunk.choices[0].delta.content
+    except Exception as error:
+        logger.error(
+            "ai_stream_error error_type=%s status_code=502",
+            error.__class__.__name__
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="AI 流式返回结构异常，请稍后重试。"
+        ) from error
+
+# 在开始 StreamingResponse 前先拿到第一段内容，便于失败时返回 JSON 错误。
+def prepare_ai_stream(response):
+    try:
+        for chunk in response:
+            content = get_ai_stream_content(chunk)
+            if content:
+                return content, response
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise_ai_call_error(error)
+
+    logger.error("ai_stream_error error_type=EmptyAIStreamContent status_code=502")
+    raise HTTPException(
+        status_code=502,
+        detail="AI 返回内容为空，请稍后重试。"
+    )
+
+# 继续输出已经通过首段校验的流式内容。
+def stream_ai_content(first_content: str, response):
+    yield first_content
+
+    try:
+        for chunk in response:
+            content = get_ai_stream_content(chunk)
+            if content:
+                yield content
+    except Exception as error:
+        logger.warning(
+            "ai_stream_interrupted error_type=%s",
+            error.__class__.__name__
+        )
+        yield "\n\nAI 服务连接中断，请稍后重试。"
+
 # 普通文本版 AI 调用，主要用于命令行运行 python day06.py 时测试。
 def ask_ai(resume_text:str,job_target:str)->str:
     # 调用智谱 AI 的聊天补全接口，请模型按固定三段格式输出文本。
-    response = client.chat.completions.create(
-        model="glm-5.1",
+    response = create_ai_completion(
         messages=[
             {
                 "role":"system",
@@ -122,13 +284,12 @@ def ask_ai(resume_text:str,job_target:str)->str:
     )
 
     # 取出模型返回的文本内容。
-    return  response.choices[0].message.content
+    return get_ai_message_content(response)
 
 # 结构化 JSON 版 AI 调用，供 /polish-resume-json 接口使用。
 def ask_ai_json(job_target:str,resume_text:str)->ResumeJsonResponse:
     # 低 temperature 可以让模型输出更稳定，更适合要求严格 JSON 的场景。
-    response = client.chat.completions.create(
-        model="glm-5.1",
+    response = create_ai_completion(
         messages=[
             {
                 "role": "system",
@@ -175,7 +336,7 @@ def ask_ai_json(job_target:str,resume_text:str)->ResumeJsonResponse:
     )
 
     # 取出 AI 返回的原始文本，后面会尝试按 JSON 解析。
-    content = response.choices[0].message.content
+    content = get_ai_message_content(response)
 
     try:
         # 先清理可能出现的 Markdown 代码块，再解析 JSON。
@@ -188,19 +349,20 @@ def ask_ai_json(job_target:str,resume_text:str)->ResumeJsonResponse:
             optimized_resume=data["optimized_resume"],
             reasons=data["reasons"]
         )
+    except HTTPException:
+        raise
     except Exception:
-        # 如果 AI 没有返回合法 JSON，返回 500 错误给前端。
+        # 如果 AI 没有返回合法 JSON，返回明确错误，但不暴露原始 AI 内容。
         raise HTTPException(
-            status_code=500,
-            detail=f"AI 返回内容不是合法 JSON。原始内容：{content}"
+            status_code=502,
+            detail="AI 返回格式异常，请稍后重试。"
         )
 
 
 # 流式文本版 AI 调用，供 /polish-resume-stream 接口使用。
 def ask_ai_stream(resume_text:str,job_target:str):
     # stream=True 表示模型边生成边返回，前端可以逐步显示内容。
-    response = client.chat.completions.create(
-        model="glm-5.1",
+    response = create_ai_completion(
         messages=[
             {
                 "role": "system",
@@ -234,11 +396,9 @@ def ask_ai_stream(resume_text:str,job_target:str):
         stream=True
     )
 
-    # 逐个读取模型返回的数据块，把有内容的部分 yield 给 StreamingResponse。
-    for chunk in response:
-        delta = chunk.choices[0].delta
-        if delta.content:
-            yield delta.content
+    # 先确认 AI 已经返回了第一段有效内容，再进入流式输出。
+    first_content, response = prepare_ai_stream(response)
+    return stream_ai_content(first_content, response)
 
 # 根路径接口，用来快速确认 API 服务已经启动。
 @app.get("/")
@@ -248,27 +408,81 @@ def home():
 # 结构化简历优化接口，前端点击“结构化优化简历”时会调用它。
 @app.post("/polish-resume-json", response_model=ResumeJsonResponse)
 def polish_resume_json_api(request: ResumeRequest):
-    validate_resume_text(request.resume_text)
+    resume_length = len(request.resume_text)
+    endpoint = "polish_resume_json"
 
-    # 从请求体中取出简历内容和目标岗位，交给 JSON 版 AI 函数处理。
-    return ask_ai_json(
-        resume_text=request.resume_text,
-        job_target=request.job_target
+    logger.info(
+        "resume_request_start endpoint=%s resume_length=%d",
+        endpoint,
+        resume_length
     )
+
+    try:
+        validate_job_target(request.job_target)
+        validate_resume_text(request.resume_text)
+
+        # 从请求体中取出简历内容和目标岗位，交给 JSON 版 AI 函数处理。
+        response = ask_ai_json(
+            resume_text=request.resume_text,
+            job_target=request.job_target
+        )
+    except HTTPException as error:
+        logger.warning(
+            "resume_request_error endpoint=%s error_type=%s status_code=%d resume_length=%d",
+            endpoint,
+            error.__class__.__name__,
+            error.status_code,
+            resume_length
+        )
+        raise
+
+    logger.info(
+        "resume_request_end endpoint=%s resume_length=%d",
+        endpoint,
+        resume_length
+    )
+    return response
 
 # 流式简历优化接口，前端点击“流式优化简历”时会调用它。
 @app.post("/polish-resume-stream")
 def polish_resume_stream_api(request:ResumeRequest):
-    validate_resume_text(request.resume_text)
+    resume_length = len(request.resume_text)
+    endpoint = "polish_resume_stream"
 
-    # StreamingResponse 会把 ask_ai_stream 生成的文本块持续返回给浏览器。
-    return StreamingResponse(
-        ask_ai_stream(
+    logger.info(
+        "resume_request_start endpoint=%s resume_length=%d",
+        endpoint,
+        resume_length
+    )
+
+    try:
+        validate_job_target(request.job_target)
+        validate_resume_text(request.resume_text)
+        stream = ask_ai_stream(
             resume_text=request.resume_text,
             job_target=request.job_target
-        ),
-        media_type = 'text/plain; charset = utf-8'
+        )
+    except HTTPException as error:
+        logger.warning(
+            "resume_request_error endpoint=%s error_type=%s status_code=%d resume_length=%d",
+            endpoint,
+            error.__class__.__name__,
+            error.status_code,
+            resume_length
+        )
+        raise
+
+    # StreamingResponse 会把 ask_ai_stream 生成的文本块持续返回给浏览器。
+    response = StreamingResponse(
+        stream,
+        media_type='text/plain; charset=utf-8'
     )
+    logger.info(
+        "resume_request_end endpoint=%s resume_length=%d",
+        endpoint,
+        resume_length
+    )
+    return response
 
 # 健康检查接口，常用于确认后端进程是否正常。
 @app.get('/health')
@@ -283,6 +497,9 @@ if __name__ == "__main__":
 
     # 调用普通文本版 AI 函数，并把结果打印到终端。
     print("\nAI正在优化你的简历，请稍等...")
-    result = ask_ai(resume_text,job_target)
-    print("\nAI回答:")
-    print(result)
+    try:
+        result = ask_ai(resume_text,job_target)
+        print("\nAI回答:")
+        print(result)
+    except HTTPException as error:
+        print(f"\n出错了：{error.detail}")

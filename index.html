@@ -141,15 +141,23 @@
     async function readErrorMessage(response) {
         try {
             const errorData = await response.json();
-            return errorData.detail || "请求失败";
+            if (typeof errorData.detail === "string") {
+                return errorData.detail;
+            }
+
+            if (Array.isArray(errorData.detail) && errorData.detail.length > 0) {
+                return errorData.detail[0].msg || "请求参数不正确";
+            }
+
+            return "请求失败";
         } catch {
             return "请求失败";
         }
     }
 
     async function polishResumeJson() {
-        const jobTarget = document.getElementById("jobTarget").value;
-        const resumeText = document.getElementById("resumeText").value;
+        const jobTarget = document.getElementById("jobTarget").value.trim();
+        const resumeText = document.getElementById("resumeText").value.trim();
         const resultDiv = document.getElementById("result");
         const submitBtn = document.getElementById("jsonBtn");
         const originalBtnText = submitBtn.innerText;
@@ -195,8 +203,8 @@
     }
 
 async function polishResumeStream() {
-    const jobTarget = document.getElementById("jobTarget").value;
-    const resumeText = document.getElementById("resumeText").value;
+    const jobTarget = document.getElementById("jobTarget").value.trim();
+    const resumeText = document.getElementById("resumeText").value.trim();
     const resultDiv = document.getElementById("result");
     const streamBtn = document.getElementById("streamBtn");
     const originalBtnText = streamBtn.innerText;

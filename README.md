@@ -1,36 +1,52 @@
 # AI Resume Optimizer
 
-AI Resume Optimizer 是一个基于智谱 AI 大模型的简历优化工具。用户输入目标岗位和原始简历内容后，系统会分析简历存在的问题，并生成更适合招聘场景的优化表达和修改理由。
+AI Resume Optimizer 是一个基于智谱 AI 大模型的简历优化工具。用户输入目标岗位和原始简历内容后，系统会分析简历表达问题，生成更贴近招聘场景的优化版本，并解释修改原因。
 
-## 项目功能
+这个项目展示了一个完整的小型 AI 应用闭环：前端表单交互、FastAPI 后端接口、环境变量管理、AI SDK 调用、结构化 JSON 响应、流式输出和基础错误处理。
 
-- 根据目标岗位分析原始简历内容的问题。
+## 项目亮点
+
+- **面向真实场景**：围绕简历优化这一明确业务需求设计输入、输出和提示词。
+- **双模式输出**：支持结构化 JSON 返回，也支持流式文本返回。
+- **安全边界清晰**：API Key 仅通过 `.env` 配置，不暴露到前端或文档。
+- **输入校验**：后端会拒绝空简历、空岗位等无效请求，避免无意义调用 AI。
+- **错误处理**：AI 调用失败、超时、返回为空时返回明确 JSON 错误。
+- **日志记录**：记录请求开始、结束、错误类型和简历长度，不记录完整简历内容。
+
+## 功能概览
+
+- 输入目标岗位和原始简历内容。
+- 分析原始简历存在的问题。
 - 基于用户提供的事实优化简历表达。
-- 返回结构化 JSON 结果，方便前端分区展示。
-- 支持流式输出，让用户逐步看到 AI 生成内容。
-- 提供健康检查接口，方便确认后端服务是否正常。
+- 解释为什么这样修改。
+- 提供结构化结果，方便前端分区展示。
+- 提供流式输出，让用户逐步看到生成结果。
+- 提供健康检查接口，方便确认后端服务状态。
 
 ## 技术栈
 
-- Python 3.9+
-- FastAPI
-- Pydantic
-- Uvicorn
-- python-dotenv
-- 智谱 AI SDK：`zai-sdk`
-- 前端：HTML、CSS、JavaScript、Fetch API
+| 分类 | 技术 |
+| --- | --- |
+| 后端框架 | FastAPI |
+| 数据校验 | Pydantic |
+| AI 调用 | 智谱 AI SDK `zai-sdk` |
+| 环境变量 | python-dotenv |
+| 服务运行 | Uvicorn |
+| 前端 | HTML, CSS, JavaScript, Fetch API |
 
-## 文件结构
+## 项目结构
 
 ```text
-D:\api-test\day02
-├── AGENTS.md                  # 项目协作和修改规则
-├── CLAUDE.md                  # 项目说明备份或其他助手规则
-├── README.md                  # 项目说明文档
-├── day06.py                   # 后端主代码，包含 FastAPI 接口和 AI 调用逻辑
+.
+├── README.md                  # 项目介绍和运行说明
+├── AGENTS.md                  # 协作规则和项目约束
+├── day06.py                   # FastAPI 后端主文件
 ├── index.html                 # 前端页面
-├── requirements.txt           # Python 依赖列表
+├── requirements.txt           # Python 直接依赖
+├── .env.example               # 环境变量模板，不包含真实密钥
+├── .gitignore                 # Git 忽略规则
 ├── docs/
+│   ├── api.md                 # API 文档
 │   └── day03-backend-notes.md # 后端学习笔记
 └── test/
     ├── day03.py
@@ -38,34 +54,34 @@ D:\api-test\day02
     └── day05.py
 ```
 
-本地还可能存在以下文件或目录，它们不应该提交：
+## 本地运行
 
-- `.env`
-- `.venv/`
-- `__pycache__/`
-- `.idea/`
+### 1. 克隆并进入项目
 
-## 本地运行方法
+```bash
+git clone https://github.com/xi-ykx/resume-ai.git
+cd resume-ai
+```
 
-### 1. 安装依赖
+### 2. 安装依赖
 
-在项目根目录运行：
+建议先创建并激活虚拟环境，然后安装依赖：
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 配置环境变量
+### 3. 配置环境变量
 
-在项目根目录创建 `.env` 文件，并配置智谱 AI API Key：
+复制 `.env.example` 为 `.env`，并填写你自己的智谱 AI API Key：
 
 ```text
-ZHIPUAI_API_KEY="你的智谱AI API Key"
+ZHIPUAI_API_KEY=your_api_key_here
 ```
 
-注意：不要把真实 API Key 写入 README，也不要提交 `.env` 文件。
+不要把真实 API Key 写入 README、前端代码或提交到 GitHub。
 
-### 3. 启动后端服务
+### 4. 启动后端
 
 ```bash
 uvicorn day06:app --reload
@@ -77,7 +93,7 @@ uvicorn day06:app --reload
 http://127.0.0.1:8000
 ```
 
-### 4. 检查后端是否启动成功
+### 5. 检查服务状态
 
 浏览器访问：
 
@@ -85,65 +101,57 @@ http://127.0.0.1:8000
 http://127.0.0.1:8000/health
 ```
 
-或在 PowerShell 中运行：
-
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/health"
-```
-
 预期返回：
 
 ```json
-{"status":"ok"}
+{
+  "status": "ok"
+}
 ```
 
-### 5. 打开前端页面
+### 6. 打开前端
 
-用浏览器打开：
+直接用浏览器打开：
 
 ```text
-D:\api-test\day02\index.html
+index.html
 ```
 
-然后输入目标岗位和简历内容，点击页面上的按钮进行测试。
+输入目标岗位和简历内容后，可以分别测试“结构化优化简历”和“流式优化简历”。
 
-## 环境变量说明
+## API 文档
 
-| 变量名 | 是否必需 | 说明 |
+完整接口说明见：
+
+[docs/api.md](docs/api.md)
+
+当前核心接口：
+
+- `GET /health`：健康检查
+- `POST /polish-resume-json`：结构化简历优化
+- `POST /polish-resume-stream`：流式简历优化
+
+## 环境变量
+
+| 变量名 | 必填 | 说明 |
 | --- | --- | --- |
-| `ZHIPUAI_API_KEY` | 是 | 智谱 AI API Key，用于后端调用大模型。 |
+| `ZHIPUAI_API_KEY` | 是 | 智谱 AI API Key，仅供后端调用模型使用 |
 
-示例：
+项目提供 `.env.example` 作为模板。真实 `.env` 文件已在 `.gitignore` 中忽略。
 
-```text
-ZHIPUAI_API_KEY="请在本地填写真实密钥，不要提交"
-```
+## 安全说明
 
-## 当前功能
-
-后端当前提供以下接口：
-
-- `GET /`：返回 API 启动提示。
-- `GET /health`：健康检查。
-- `POST /polish-resume-json`：返回结构化简历优化结果。
-- `POST /polish-resume-stream`：返回流式简历优化文本。
-
-前端当前支持：
-
-- 输入目标岗位。
-- 输入原始简历内容。
-- 调用结构化优化接口。
-- 调用流式优化接口。
-- 展示 AI 返回结果。
-- 请求过程中按钮显示“处理中...”，请求结束后恢复原文字。
+- 不提交 `.env`。
+- 不在前端保存或传输 API Key。
+- 不在日志中记录完整简历内容。
+- 错误响应不暴露 API Key 或底层敏感信息。
+- 当前 CORS 配置适合本地开发，生产部署时应限制允许访问的前端域名。
 
 ## 后续计划
 
-- 增加输入字数统计和长度限制。
-- 增加复制优化结果按钮。
-- 增加请求取消功能，尤其是流式输出场景。
-- 优化错误提示，区分后端未启动、参数错误、AI 调用失败等情况。
-- 限制 CORS 来源，避免生产环境使用 `allow_origins=["*"]`。
-- 增加接口鉴权和限流，控制调用成本。
-- 增加自动化测试，覆盖参数校验、JSON 解析和接口返回。
-- 整理依赖列表，移除不再使用的依赖。
+- 增加复制优化结果功能。
+- 增加输入字数统计和最大长度限制。
+- 增加请求取消功能，优化流式输出体验。
+- 增加单元测试和接口测试。
+- 增加更细粒度的错误码。
+- 为生产部署收紧 CORS、增加鉴权和限流。
