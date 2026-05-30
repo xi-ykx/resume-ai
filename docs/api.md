@@ -54,7 +54,7 @@ http://127.0.0.1:8000
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `job_target` | string | 是 | 目标岗位，至少 2 个字符；全空格会被业务校验拒绝 |
+| `job_target` | string | 否 | 目标岗位，可为空字符串；为空时按通用招聘场景优化 |
 | `resume_text` | string | 是 | 原始简历内容，不能是空字符串或全空格 |
 
 ### ResumeJsonResponse
@@ -246,23 +246,15 @@ console.log(data.reasons);
 }
 ```
 
-目标岗位为全空格且长度满足请求模型时，状态码：`400`
-
-```json
-{
-  "detail": "目标岗位不能为空，请填写目标岗位。"
-}
-```
-
-目标岗位为空字符串、长度不足或字段缺失时，状态码：`422`
+字段缺失或类型错误时，状态码：`422`
 
 ```json
 {
   "detail": [
     {
-      "type": "string_too_short",
-      "loc": ["body", "job_target"],
-      "msg": "String should have at least 2 characters"
+      "type": "missing",
+      "loc": ["body", "resume_text"],
+      "msg": "Field required"
     }
   ]
 }

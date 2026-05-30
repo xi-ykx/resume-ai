@@ -2,328 +2,67 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 简历润色助手</title>
-    <style>
-        body {
-            font-family: Arial, "Microsoft YaHei", sans-serif;
-            max-width: 900px;
-            margin: 40px auto;
-            padding: 0 20px;
-            background-color: #f7f7f7;
-        }
-
-        h1 {
-            text-align: center;
-        }
-
-        .card {
-            background: white;
-            padding: 24px;
-            border-radius: 12px;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-            margin-bottom: 20px;
-        }
-
-        label {
-            display: block;
-            font-weight: bold;
-            margin-top: 16px;
-            margin-bottom: 8px;
-        }
-
-        input, textarea {
-            width: 100%;
-            box-sizing: border-box;
-            padding: 12px;
-            font-size: 16px;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-        }
-
-        textarea {
-            height: 140px;
-            resize: vertical;
-        }
-
-        button {
-            margin-top: 20px;
-            width: 100%;
-            padding: 14px;
-            font-size: 18px;
-            background-color: #1677ff;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-
-        button:disabled {
-            background-color: #999;
-            cursor: not-allowed;
-        }
-
-        .result-section {
-            margin-top: 16px;
-        }
-
-        .result-section h3 {
-            margin-bottom: 8px;
-            color: #333;
-        }
-
-        .result-box {
-            background: #f0f5ff;
-            padding: 16px;
-            border-radius: 8px;
-            white-space: pre-wrap;
-            line-height: 1.7;
-        }
-
-        .error {
-            background: #fff2f0;
-            color: #cf1322;
-            padding: 16px;
-            border-radius: 8px;
-        }
-    </style>
+    <link rel="stylesheet" href="static/css/style.css">
 </head>
 <body>
 
-<h1>AI 简历润色助手</h1>
-
-<div class="card">
-    <label for="jobTarget">目标岗位</label>
-    <input id="jobTarget" value="AI应用工程师">
-
-    <label for="resumeText">简历内容</label>
-    <textarea id="resumeText">我学过Python，会调用AI接口，做过一个聊天机器人。</textarea>
-
-    <button id="jsonBtn" onclick="polishResumeJson()">结构化优化简历</button>
-    <button id="streamBtn" onclick="polishResumeStream()">流式优化简历</button>
+<div class="header">
+    <h1>AI 简历润色助手</h1>
+    <p>基于 DeepSeek 大模型，帮你把普通经历改写成更具竞争力的简历表达</p>
 </div>
 
+<!-- Input Card -->
 <div class="card">
-    <h2>优化结果</h2>
-    <button id="copyBtn" onclick="copyOptimizedResume()" disabled>复制优化结果</button>
-    <div id="result">点击上方按钮后，这里会显示 AI 返回的结果。</div>
+    <div class="form-group">
+        <label for="jobTarget">目标岗位 <span class="hint">可选，不填则按通用场景优化</span></label>
+        <input id="jobTarget" placeholder="例如：AI应用工程师、Python后端开发" maxlength="100">
+    </div>
+
+    <div class="form-group">
+        <label for="resumeText">简历内容 <span class="hint">必填</span></label>
+        <textarea id="resumeText" placeholder="粘贴你的原始简历内容，例如：&#10;我学过Python，会调用AI接口，做过一个聊天机器人。"></textarea>
+        <div class="char-count" id="charCount">0 / 8000</div>
+    </div>
+
+    <div class="btn-row">
+        <button class="btn btn-primary" id="jsonBtn">结构化优化</button>
+        <button class="btn btn-secondary" id="streamBtn">流式优化</button>
+    </div>
 </div>
 
-<script>
-    let copyText = "";
+<!-- Result Card -->
+<div class="card">
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="result">优化结果</button>
+        <button class="tab-btn" data-tab="history">历史记录</button>
+    </div>
 
-    function setCopyText(text) {
-        copyText = text || "";
-        document.getElementById("copyBtn").disabled = !copyText;
-    }
+    <!-- Result Tab -->
+    <div class="tab-panel active" id="tab-result">
+        <div class="toolbar">
+            <button class="icon-btn" id="copyBtn" disabled>复制结果</button>
+        </div>
+        <div id="result">
+            <div class="empty-state">
+                <div class="icon">&#x1F4DD;</div>
+                <p>填写目标岗位和简历内容，然后点击优化按钮</p>
+            </div>
+        </div>
+    </div>
 
-    function setPlainResult(message) {
-        const resultDiv = document.getElementById("result");
-        resultDiv.replaceChildren(document.createTextNode(message));
-    }
+    <!-- History Tab -->
+    <div class="tab-panel" id="tab-history">
+        <div id="historyList">
+            <div class="loading-hint">
+                <div class="spinner"></div>
+                <span>加载中...</span>
+            </div>
+        </div>
+    </div>
+</div>
 
-    function showError(message) {
-        const resultDiv = document.getElementById("result");
-        const errorDiv = document.createElement("div");
-        errorDiv.className = "error";
-        errorDiv.textContent = message;
-        resultDiv.replaceChildren(errorDiv);
-    }
-
-    function showTemporaryMessage(message) {
-        const resultDiv = document.getElementById("result");
-        const messageDiv = document.createElement("div");
-        messageDiv.className = "result-box";
-        messageDiv.textContent = message;
-        resultDiv.prepend(messageDiv);
-
-        setTimeout(() => {
-            messageDiv.remove();
-        }, 1800);
-    }
-
-    function createResultSection(title, content) {
-        const section = document.createElement("div");
-        section.className = "result-section";
-
-        const heading = document.createElement("h3");
-        heading.textContent = title;
-
-        const box = document.createElement("div");
-        box.className = "result-box";
-        box.textContent = Array.isArray(content)
-            ? content.map(item => `• ${item}`).join("\n")
-            : content;
-
-        section.append(heading, box);
-        return section;
-    }
-
-    function valueOrFallback(value) {
-        if (Array.isArray(value)) {
-            return value.length > 0 ? value : ["暂无内容"];
-        }
-
-        return value || "暂无内容";
-    }
-
-    async function readErrorMessage(response) {
-        try {
-            const errorData = await response.json();
-            if (typeof errorData.detail === "string") {
-                return errorData.detail;
-            }
-
-            if (Array.isArray(errorData.detail) && errorData.detail.length > 0) {
-                return errorData.detail[0].msg || "请求参数不正确";
-            }
-
-            return "请求失败";
-        } catch {
-            return "请求失败";
-        }
-    }
-
-    async function writeToClipboard(text) {
-        if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(text);
-            return;
-        }
-
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.style.position = "fixed";
-        textarea.style.left = "-9999px";
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        document.execCommand("copy");
-        textarea.remove();
-    }
-
-    async function copyOptimizedResume() {
-        if (!copyText) {
-            showError("暂无可复制的优化结果。");
-            return;
-        }
-
-        try {
-            await writeToClipboard(copyText);
-            showTemporaryMessage("已复制优化结果。");
-        } catch {
-            showError("复制失败，请手动选择文本复制。");
-        }
-    }
-
-    async function polishResumeJson() {
-        const jobTarget = document.getElementById("jobTarget").value.trim();
-        const resumeText = document.getElementById("resumeText").value.trim();
-        const resultDiv = document.getElementById("result");
-        const submitBtn = document.getElementById("jsonBtn");
-        const originalBtnText = submitBtn.innerText;
-
-        if (!resumeText) {
-            showError("请填写简历内容。");
-            return;
-        }
-
-        submitBtn.disabled = true;
-        submitBtn.innerText = "处理中...";
-        setCopyText("");
-        setPlainResult("正在请求 AI，请稍等...");
-
-        try {
-            const response = await fetch("http://127.0.0.1:8000/polish-resume-json", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    job_target: jobTarget,
-                    resume_text: resumeText
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(await readErrorMessage(response));
-            }
-
-            const data = await response.json();
-            setCopyText(data.optimized_resume || "");
-            resultDiv.replaceChildren(
-                createResultSection("一、优化后的简历", valueOrFallback(data.optimized_resume)),
-                createResultSection("二、修改理由", valueOrFallback(data.reasons)),
-                createResultSection("三、关键词建议", valueOrFallback(data.problem_analysis))
-            );
-
-        } catch (error) {
-            showError(`出错了：${error.message}`);
-        } finally {
-            submitBtn.disabled = false;
-            submitBtn.innerText = originalBtnText;
-        }
-    }
-
-async function polishResumeStream() {
-    const jobTarget = document.getElementById("jobTarget").value.trim();
-    const resumeText = document.getElementById("resumeText").value.trim();
-    const resultDiv = document.getElementById("result");
-    const streamBtn = document.getElementById("streamBtn");
-    const originalBtnText = streamBtn.innerText;
-
-    if (!resumeText) {
-        showError("请填写简历内容。");
-        return;
-    }
-
-    streamBtn.disabled = true;
-    streamBtn.innerText = "处理中...";
-    setCopyText("");
-
-    const streamBox = document.createElement("div");
-    streamBox.className = "result-box";
-    resultDiv.replaceChildren(streamBox);
-
-    try {
-        const response = await fetch("http://127.0.0.1:8000/polish-resume-stream", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                job_target: jobTarget,
-                resume_text: resumeText
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(await readErrorMessage(response));
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let streamedText = "";
-
-        while (true) {
-            const { done, value } = await reader.read();
-
-            if (done) {
-                break;
-            }
-
-            const chunk = decoder.decode(value, { stream: true });
-            streamedText += chunk;
-            streamBox.appendChild(document.createTextNode(chunk));
-        }
-        setCopyText(streamedText.trim());
-
-    } catch (error) {
-        showError(`出错了：${error.message}`);
-    } finally {
-        streamBtn.disabled = false;
-        streamBtn.innerText = originalBtnText;
-    }
-}
-</script>
-
+<script src="static/js/main.js"></script>
 </body>
 </html>

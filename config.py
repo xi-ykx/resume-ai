@@ -24,10 +24,16 @@ if not DEEPSEEK_API_KEY:
 MAX_JOB_TARGET_LENGTH = 100
 MAX_RESUME_TEXT_LENGTH = 8000
 
-# 本地开发允许的来源和历史记录访问来源。
+# 本地开发允许的来源。包含 "null" 是因为通过 file:// 协议直接打开
+# index.html 时浏览器会发送 Origin: null。生产环境请移除此项。
 LOCAL_ALLOWED_ORIGINS = [
     "null",
     "http://127.0.0.1:8000",
-    "http://localhost:8000"
+    "http://localhost:8000",
+    "http://127.0.0.1:5500",
+    "http://localhost:5500"
 ]
 LOCAL_CLIENT_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+# 本地历史记录访问令牌，前端需要在请求头中携带。
+LOCAL_HISTORY_TOKEN = "local-dev-history-token"
